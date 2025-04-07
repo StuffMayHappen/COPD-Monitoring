@@ -1,0 +1,248 @@
+1. Setting Up the Django Backend (API Server)
+We'll create an "API in Django" to handle requests from the wearable RPM system and the frontend.  
+
+Install Django & Django REST Framework
+Run the following commands in your terminal:  
+```bash
+pip install django djangorestframework pandas scikit-learn
+```
+
+---
+
+2. Create a Django Project & App
+```bash
+django-admin startproject rpm_backend
+cd rpm_backend
+django-admin startapp monitoring
+```
+Add `'rest_framework'` and `'monitoring'` to `INSTALLED_APPS` in `settings.py`.
+
+---
+
+3. Create the COPD Monitoring Model
+
+Create a new file `models.py` in the `monitoring` app directory and add the following command
+
+```bash
+python manage.py inspectdb
+```
+
+Modify `monitoring/models.py` to store "sensor" data and predictions:  
+
+```python
+from django.db import models
+
+class SensorData(models.Model):
+    heart_rate = models.FloatField()
+    oxygen_saturation = models.FloatField()
+    respiratory_rate = models.FloatField()
+    activity_level = models.CharField(max_length=20)
+    copd_risk = models.IntegerField(default=0)  # 0 = Low, 1 = Medium, 2 = High
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Patient Data {self.id} - Risk: {self.copd_risk}"
+```
+Run migrations:  
+```bash
+python manage.py makemigrations
+python manage.py migrate
+```
+
+---
+
+4. Create a Django REST API
+Modify `monitoring/views.py`:  
+```python
+from rest_framework import viewsets
+from .models import SensorData
+from .serializers import SensorDataSerializer
+import joblib
+import numpy as np
+
+Load the trained model
+model = joblib.load("copd_model.pkl")  # Save your trained model as copd_model.pkl
+
+class SensorDataViewSet(viewsets.ModelViewSet):
+    queryset = SensorData.objects.all()
+    serializer_class = SensorDataSerializer
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        input_data = np.array([[data["heart_rate"], data["oxygen_saturation"], data["respiratory_rate"]]])
+        predicted_risk = model.predict(input_data)[0]  
+        serializer.save(copd_risk=predicted_risk)
+```
+
+Create a "serializer" in "`monitoring/serializers.py`":  
+```python
+from rest_framework import serializers
+from .models import SensorData
+
+class SensorDataSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SensorData
+        fields = "__all__"
+```
+
+Modify "`urls.py`" in the project directory:  
+```python
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from monitoring.views import SensorDataViewSet
+
+router = DefaultRouter()
+router.register(r'sensor-data', SensorDataViewSet)
+
+urlpatterns = [
+    path('api/', include(router.urls)),
+]
+```
+
+Run the Django server:  
+```bash
+python manage.py runserver
+```
+Now, you can access sensor data at:  
+`http://127.0.0.1:8000/api/sensor-data/`
+
+---
+
+IF I want to create the Frontennd using Django Templates (HTML, CSS, JS)** to display COPD monitoring data.
+
+---
+
+Creating the Frontend Using Django Templates
+
+1. Create a `templates` Folder  
+Inside the `monitoring` app, create a folder:  
+```
+monitoring/templates/monitoring/
+```
+This is where we will store **HTML templates**.
+
+---
+
+2. Create a Basic Dashboard (`dashboard.html`)  
+Create the file:  
+`monitoring/templates/monitoring/dashboard.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wearable RPM Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        table { width: 80%; margin: 20px auto; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+        th { background-color: #007BFF; color: white; }
+        .alert { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>Wearable RPM Dashboard</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Heart Rate (BPM)</th>
+                <th>Oxygen Saturation (%)</th>
+                <th>Respiratory Rate</th>
+                <th>Risk Level</th>
+                <th>Alert</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for data in sensor_data %}
+            <tr>
+                <td>{{ data.heart_rate }}</td>
+                <td>{{ data.oxygen_saturation }}</td>
+                <td>{{ data.respiratory_rate }}</td>
+                <td>
+                    {% if data.copd_risk == 0 %} Low
+                    {% elif data.copd_risk == 1 %} Medium
+                    {% else %} High {% endif %}
+                </td>
+                <td class="{% if data.oxygen_saturation < 90 or data.respiratory_rate > 25 %}alert{% endif %}">
+                    {% if data.oxygen_saturation < 90 or data.respiratory_rate > 25 %}
+                        🚨 Warning!
+                    {% else %}
+                        ✅ Normal
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
+```
+---
+
+3. Update Django Views
+Modify `monitoring/views.py` to render the template and pass the sensor data.
+
+```python
+from django.shortcuts import render
+from .models import SensorData
+
+def dashboard(request):
+    sensor_data = SensorData.objects.all().order_by('-timestamp')[:10]  # Show last 10 records
+    return render(request, "monitoring/dashboard.html", {"sensor_data": sensor_data})
+```
+
+---
+
+4. Configure Django URLs
+Modify `monitoring/urls.py`:  
+
+```python
+from django.urls import path
+from .views import dashboard
+
+urlpatterns = [
+    path('dashboard/', dashboard, name="dashboard"),
+]
+```
+
+Add this to `rpm_backend/urls.py`:  
+```python
+from django.urls import include, path
+
+urlpatterns = [
+    path('monitoring/', include('monitoring.urls')),
+]
+```
+
+---
+
+5. Start the Django Server  
+Run:  
+```bash
+python manage.py runserver
+```
+Now, open `http://127.0.0.1:8000/monitoring/dashboard/` in my case brave browser!
+
+---
+
+Next Steps
+Add Bootstrap for a better UI  
+Enable Live Data Refreshing (AJAX/JavaScript Fetch API)  
+Deploy on a Server (AWS, DigitalOcean, etc.)
+
+I can add live data updates using JavaScript after the conclusion of the step above . ~
+I will also add a simple form to add new sensor data. 
+I will also add a simplification of the UI using Bootstrap.
+
+
+tabela user
+
+id
+descrição 
+idade
+
+tabela devices 
+id
+user_id
